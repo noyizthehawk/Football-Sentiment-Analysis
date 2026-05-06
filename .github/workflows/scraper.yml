@@ -32,4 +32,4 @@ jobs:
           DB_PORT: ${{ secrets.DB_PORT }}
         run: |
           python src/news_scraper.py
-          python src/sentiment_analyzer.py
+          python src/sentiment-analyzer.py
