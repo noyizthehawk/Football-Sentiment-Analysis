@@ -13,12 +13,9 @@ url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
 supabase=create_client(url,key)
 
-response = supabase.table("articles").select("*").execute()
+response = supabase.table("articles").select("*").eq("checked", False).execute()
 data = response.data
-
-ids = [article["id"] for article in data]
-print("Total rows fetched:", len(ids))
-print("Unique IDs:", len(set(ids)))
+print(f"Articles remaining to analyze: {len(data)}")
 
 for article in data:
     try:
@@ -31,7 +28,7 @@ for article in data:
         article_title = article["title"]
         prompt = (
             f"You are a football (soccer) news article analyzer. For this article: {article_text} "
-            "determine whether it is related to football/soccer and extract structured insights. "
+            "determine whether it is related to football/soccer (NOT American football, NOT rugby) and extract structured insights. "
             "You must extract the following fields: "
             "is_football (boolean indicating if the article is about football/soccer), "
             "sentiment (positive, negative, or neutral), "
@@ -48,8 +45,10 @@ for article in data:
                 {"role": "user", "content": prompt}
             ]
         )
+        supabase.table("articles").update({"checked": True}).eq("id", article["id"]).execute()
         text_output = claude_response.content[0].text.strip()
         text_output = re.sub(r"```json|```", "", text_output).strip()
+
         output = json.loads(text_output)
         if not output["is_football"]:
             print(f"Skipping non-football article: {article_title}")

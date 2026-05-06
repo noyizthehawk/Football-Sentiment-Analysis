@@ -2,10 +2,12 @@ import requests
 import psycopg2
 import json
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
 api_key = os.getenv("NEWS_API_KEY")
 db_host = os.getenv("DB_HOST")
+today = datetime.utcnow()
 
 '''do the same for DB_NAME=postgres
 DB_USER=postgres
@@ -36,12 +38,15 @@ conn = psycopg2.connect(
 )
 cur = conn.cursor()
 for keyword in keywords:
+    thirty_days_ago = today - timedelta(days=29)
+
     url = (
-    f'https://newsapi.org/v2/everything?'
-    f'q={keyword}&'
-    'from=2026-04-05&'
-    'sortBy=popularity&'
-    f'apiKey={api_key}'
+        f'https://newsapi.org/v2/everything?'
+        f'q={keyword}&'
+        f'from={thirty_days_ago.strftime("%Y-%m-%d")}&'
+        f'to={today.strftime("%Y-%m-%d")}&'
+        'sortBy=popularity&'
+        f'apiKey={api_key}'
     )
     response = requests.get(url)
     data = response.json()
