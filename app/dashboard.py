@@ -7,6 +7,8 @@ from collections import Counter
 from dotenv import load_dotenv
 import streamlit as st
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta, timezone
+
 
 load_dotenv()
 
@@ -26,13 +28,44 @@ url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
 supabase=create_client(url,key)
 
-#total_number_of_articles_analyized
-response = (
-    supabase.table("sentiment")
-    .select("*", count ="exact")
-    .execute()
-)
-analyzed_articles = response.count
+def get_article_count(filter_team=None):
+    response = supabase.table("sentiment").select("teams_mentioned").execute()
+    data = response.data
+
+    if not filter_team:
+        return len(data)
+
+    count = 0
+    for row in data:
+        teams = row.get("teams_mentioned") or []
+        if filter_team in teams:
+            count += 1
+
+    return count
+
+def get_recent_article_delta(hours=12, filter_team=None):
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(hours=hours)
+
+    response = supabase.table("sentiment") \
+        .select("analyzed_at, teams_mentioned") \
+        .gte("analyzed_at", past.isoformat()) \
+        .execute()
+
+    data = response.data
+
+    if filter_team:
+        data = [
+            row for row in data
+            if filter_team in (row.get("teams_mentioned") or [])
+        ]
+
+    recent_count = len(data)
+
+    # total articles
+    total = get_article_count(filter_team)
+
+    return recent_count, total
 
 # getting most mentioned team
 def most_covered(number=1):
@@ -118,21 +151,31 @@ def get_sentiment_counts(filter_team=None):
 # default (all articles)
 overall = compute_sentiment_overall()
 
+# ================= TEAM FILTER =================
+team_list = [team for team, _ in most_covered(20)]
+selected_team = st.selectbox("Filter by Team", ["All"] + team_list)
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("### 📊 Total Articles")
+    recent_count, total_articles = get_recent_article_delta(
+        12,
+        selected_team if selected_team != "All" else None
+    )
+
     st.metric(
         label="Total Articles",
-        value=analyzed_articles,
-        label_visibility="collapsed"
+        value=get_article_count(selected_team if selected_team != "All" else None),
+        label_visibility="collapsed",
+        delta=f"+{recent_count} (last 12h)"
     )
 
 with col2:
     st.markdown("### ⚽ Most Covered Team")
     st.metric(
         label="Most Covered Team",
-        value=most_covered(1)[0][0],
+        value=selected_team if selected_team != "All" else most_covered(1)[0][0],
         label_visibility="collapsed"
     )
 
@@ -140,11 +183,11 @@ with col3:
     st.markdown("### 🧠 Overall Sentiment")
     st.metric(
         label="Overall Sentiment",
-        value=overall,
+        value=compute_sentiment_overall(selected_team if selected_team != "All" else None),
         label_visibility="collapsed"
     )
 #================pie chart ==============
-counts = get_sentiment_counts()
+counts = get_sentiment_counts(selected_team if selected_team != "All" else None)
 labels = ["Positive", "Neutral", "Negative"]
 sizes = [
     counts["positive"],
@@ -174,7 +217,8 @@ teams = [team for team, count in top_teams]
 team_counts = [count for team, count in top_teams]
 
 bar_fig, bar_ax = plt.subplots()
-bar_ax.barh(teams, team_counts)
+colors = ["#e74c3c" if team == selected_team else "#4C78A8" for team in teams]
+bar_ax.barh(teams, team_counts, color=colors)
 bar_ax.set_xlabel("Number of Articles")
 bar_ax.set_title("Top 10 Most Covered Teams")
 bar_ax.invert_yaxis()
