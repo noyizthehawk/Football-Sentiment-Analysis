@@ -1,4 +1,5 @@
 from supabase import create_client
+import anthropic
 import pandas as pd
 import os
 import re
@@ -28,9 +29,12 @@ url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
 supabase=create_client(url,key)
 
+@st.cache_data(ttl=18000)
+def fetch_sentiment_data():
+    return supabase.table("sentiment").select("*").execute().data
+
 def get_article_count(filter_team=None):
-    response = supabase.table("sentiment").select("teams_mentioned").execute()
-    data = response.data
+    data = fetch_sentiment_data()
 
     if not filter_team:
         return len(data)
@@ -47,35 +51,37 @@ def get_recent_article_delta(hours=12, filter_team=None):
     now = datetime.now(timezone.utc)
     past = now - timedelta(hours=hours)
 
-    response = supabase.table("sentiment") \
-        .select("analyzed_at, teams_mentioned") \
-        .gte("analyzed_at", past.isoformat()) \
-        .execute()
+    data = fetch_sentiment_data()
+    recent = []
 
-    data = response.data
+    for row in data:
+        ts = row.get("analyzed_at")
+        if not ts:
+            continue
 
-    if filter_team:
-        data = [
-            row for row in data
-            if filter_team in (row.get("teams_mentioned") or [])
-        ]
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except:
+            continue
 
-    recent_count = len(data)
+        # FORCE UTC for BOTH cases
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = ts.astimezone(timezone.utc)
 
-    # total articles
-    total = get_article_count(filter_team)
+        if ts >= past:
+            if filter_team:
+                teams = row.get("teams_mentioned") or []
+                if filter_team not in teams:
+                    continue
 
-    return recent_count, total
+            recent.append(row)
 
+    return len(recent), get_article_count(filter_team)
 # getting most mentioned team
 def most_covered(number=1):
-    mentioned_teams = (
-        supabase.table("sentiment")
-        .select("teams_mentioned")
-        .eq("is_football", True)
-        .execute()
-    )
-    data = mentioned_teams.data
+    data = fetch_sentiment_data()
     all_teams = []
     for row in data:
         teams = row.get("teams_mentioned") or []
@@ -88,8 +94,7 @@ def most_covered(number=1):
 
 # sentiment analysis (reusable)
 def compute_sentiment_overall(filter_team=None):
-    response = supabase.table("sentiment").select("sentiment, teams_mentioned").execute()
-    data = response.data
+    data = fetch_sentiment_data()
 
     sentiments = []
 
@@ -132,8 +137,7 @@ def compute_sentiment_overall(filter_team=None):
         return "Neutral / Mixed"
 
 def get_sentiment_counts(filter_team=None):
-    response = supabase.table("sentiment").select("sentiment, teams_mentioned").execute()
-    data = response.data
+    data = fetch_sentiment_data()
 
     sentiments = []
     for row in data:
@@ -230,3 +234,149 @@ with left:
 with right:
     st.subheader("🏟️ Top 10 Teams")
     st.pyplot(bar_fig)
+
+#========team sentiment score===========================
+def get_team_sentiment_score(team):
+    data = fetch_sentiment_data()
+
+    sentiments = []
+
+    for row in data:
+        teams = row.get("teams_mentioned") or []
+        if team in teams:
+            sentiments.append(row.get("sentiment"))
+
+    counts = Counter(sentiments)
+
+    positive = counts.get("positive", 0)
+    negative = counts.get("negative", 0)
+    neutral = counts.get("neutral", 0)
+
+    total = positive + negative + neutral
+
+    if total == 0:
+        return 0
+
+    return (positive - negative) / total
+#get extremes
+def get_extreme_teams():
+    team_list = [team for team, _ in most_covered(20)]
+
+    scores = []
+
+    for team in team_list:
+        score = get_team_sentiment_score(team)
+        scores.append((team, score))
+
+    most_positive = max(scores, key=lambda x: x[1])
+    most_negative = min(scores, key=lambda x: x[1])
+
+    return most_positive, most_negative
+#display on dashboard
+
+if selected_team == "All":
+    pos_team, neg_team = get_extreme_teams()
+    col4, col5 = st.columns(2)
+
+    with col4:
+        st.metric(
+            label="🔥 Most Positive Team",
+            value=pos_team[0],
+            delta=f"{pos_team[1]:.2f}"
+        )
+
+    with col5:
+        st.metric(
+            label="❄️ Most Negative Team",
+            value=neg_team[0],
+            delta=f"{neg_team[1]:.2f}"
+        )
+
+else:
+    score = get_team_sentiment_score(selected_team)
+    st.metric(
+        label=f"🧠 Sentiment Score for {selected_team}",
+        value=selected_team,
+        delta=f"{score:.2f}"
+    )
+
+# --------- Insight Section -----------
+st.markdown("---")
+st.subheader("🧠 Insight")
+
+def generate_insight(filter_team=None):
+    counts = get_sentiment_counts(filter_team)
+    total = counts["positive"] + counts["neutral"] + counts["negative"]
+
+    if total == 0:
+        return "No data available for insights."
+
+    pos_pct = counts["positive"] / total
+    neg_pct = counts["negative"] / total
+    neu_pct = counts["neutral"] / total
+
+    team_text = filter_team if filter_team else "Football coverage"
+
+    if pos_pct >= 0.65:
+        return f"🧠 Insight: {team_text} is strongly positive ({pos_pct:.0%} positive sentiment)."
+    elif neg_pct >= 0.65:
+        return f"🧠 Insight: {team_text} is strongly negative ({neg_pct:.0%} negative sentiment)."
+    elif pos_pct > neg_pct and pos_pct > 0.5:
+        return f"🧠 Insight: {team_text} leans positive overall with mixed coverage."
+    elif neg_pct > pos_pct and neg_pct > 0.5:
+        return f"🧠 Insight: {team_text} leans negative overall with mixed coverage."
+    else:
+        return f"🧠 Insight: {team_text} has balanced or neutral coverage across recent articles."
+
+filter_team = selected_team if selected_team != "All" else None
+insight = generate_insight(filter_team)
+st.info(insight)
+
+# NOTE: AI summary can be connected to Anthropic API for advanced explanations
+# using claude models. Keep it button-triggered to control cost.
+# ================= OPTIONAL AI SUMMARY =================
+st.markdown("---")
+st.subheader("🤖 AI Summary")
+
+@st.cache_data(ttl=21600)
+def get_ai_summary_cached(summary_prompt):
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    message = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=300,
+        messages=[
+            {"role": "user", "content": summary_prompt}
+        ]
+    )
+
+    return message.content[0].text
+
+if st.button("Generate AI Summary"):
+
+    summary_prompt = f"""
+    Team: {filter_team if filter_team else 'All Teams'}
+    Positive: {get_sentiment_counts(filter_team)['positive']}
+    Negative: {get_sentiment_counts(filter_team)['negative']}
+    Neutral: {get_sentiment_counts(filter_team)['neutral']}
+
+    Explain why this sentiment distribution might be happening in one paragrapgh using data from the web.
+    """
+    st.markdown(
+        f"""
+        <div style="
+            padding: 12px;
+            border-radius: 8px;
+            background-color: #0e1117;
+            border: 1px solid #2c2f36;
+            color: #e6e6e6;
+            font-size: 15px;
+            line-height: 1.5;
+        ">
+            {get_ai_summary_cached(summary_prompt)}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
