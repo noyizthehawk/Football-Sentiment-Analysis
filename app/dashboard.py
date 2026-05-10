@@ -152,6 +152,61 @@ def get_sentiment_counts(filter_team=None):
         "neutral": counts.get("neutral", 0),
         "negative": counts.get("negative", 0),
     }
+
+# ================= RAG FUNCTIONS =================
+def get_recent_articles_for_rag(filter_team=None, limit=10):
+    data = fetch_sentiment_data()
+
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(hours=24)
+
+    filtered = []
+
+    for row in data:
+        ts = row.get("analyzed_at")
+        if not ts:
+            continue
+
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except:
+            continue
+
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = ts.astimezone(timezone.utc)
+
+        if ts < past:
+            continue
+
+        if filter_team:
+            teams = row.get("teams_mentioned") or []
+            if filter_team not in teams:
+                continue
+
+        filtered.append(row)
+
+    filtered.sort(key=lambda x: x.get("analyzed_at", ""), reverse=True)
+    return filtered[:limit]
+
+
+def build_rag_context(articles):
+    context = ""
+
+    for art in articles:
+        title = art.get("title", "")
+        summary = art.get("summary", "")
+        sentiment = art.get("sentiment", "")
+
+        context += f"""
+Title: {title}
+Summary: {summary}
+Sentiment: {sentiment}
+---
+"""
+
+    return context[:4000]
 # default (all articles)
 overall = compute_sentiment_overall()
 
@@ -353,15 +408,31 @@ def get_ai_summary_cached(summary_prompt):
     return message.content[0].text
 
 if st.button("Generate AI Summary"):
-
+    articles = get_recent_articles_for_rag(filter_team)
+    context = build_rag_context(articles)
     summary_prompt = f"""
-    Team: {filter_team if filter_team else 'All Teams'}
+    You are analyzing recent football news sentiment using REAL articles.
+
+    Here are the actual articles:
+    {context}
+
+    Sentiment Stats:
     Positive: {get_sentiment_counts(filter_team)['positive']}
     Negative: {get_sentiment_counts(filter_team)['negative']}
     Neutral: {get_sentiment_counts(filter_team)['neutral']}
 
-    Explain why this sentiment distribution might be happening in one paragrapgh using data from the web.
+    Instructions:
+    - You MUST reference specific articles (mention titles or events)
+    - Do NOT give generic explanations
+    - Identify 2–4 concrete reasons for the sentiment
+    - Mention real teams, players, or events from the data
+    - If no strong signals exist, say that explicitly
+
+    Write a concise but specific explanation grounded in the articles.
+    if there are no articles presented you can just generalize using the sentiment counts
     """
+
+
     st.markdown(
         f"""
         <div style="
