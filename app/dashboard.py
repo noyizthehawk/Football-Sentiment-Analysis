@@ -23,12 +23,22 @@ st.title("NewsPulse")
 st.markdown("Sentiment of All News Articles")
 
 # --- Mode selector for Teams/Players ---
-mode = st.radio("View Sentiment By:", ["Teams", "Players"], horizontal=True)
+mode = st.radio("View Sentiment By:", ["Teams", "Players/Managers"], horizontal=True)
+
 
 if mode == "Teams":
     entity_field = "teams_mentioned"
 else:
     entity_field = "players_mentioned"
+
+# --- Player images (add more as needed) ---
+PLAYER_IMAGES = {
+    # Replace with reliable URLs you prefer
+    "Lamine Yamal": "https://upload.wikimedia.org/wikipedia/commons/e/e3/Lamine_Yamal_in_2025.jpg",
+    "Erling Haaland": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Erling_Haaland_2023.jpg/320px-Erling_Haaland_2023.jpg",
+    "Kylian Mbappé": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Kylian_Mbappe_2022.jpg/320px-Kylian_Mbappe_2022.jpg",
+    "Kai Havertz" : "https://upload.wikimedia.org/wikipedia/commons/e/e8/2019-06-11_Fußball%2C_Männer%2C_Länderspiel%2C_Deutschland-Estland_StP_2059_LR10_by_Stepro.jpg"
+}
 
 
 
@@ -226,8 +236,21 @@ Sentiment: {sentiment}
 # default (all articles)
 overall = compute_sentiment_overall()
 
+
 entity_list = [e for e, _ in get_entities(entity_field, 20)]
 selected_entity = st.selectbox(f"Filter by {mode[:-1]}", ["All"] + entity_list)
+
+# --- Selected player image ---
+if mode == "Players" and selected_entity != "All":
+    col_img, col_title = st.columns([1, 3])
+    with col_img:
+        img_url = PLAYER_IMAGES.get(selected_entity)
+        if img_url:
+            st.image(img_url, width=150)
+        else:
+            st.info("No image available for this player yet.")
+    with col_title:
+        st.subheader(selected_entity)
 
 filter_entity = selected_entity if selected_entity != "All" else None
 

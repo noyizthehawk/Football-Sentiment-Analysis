@@ -34,7 +34,7 @@ for article in data:
             "sentiment (positive, negative, or neutral), "
             "confidence (a float between 0 and 1 representing how confident you are in your analysis), "
             "teams_mentioned (list of football clubs mentioned), "
-            "players_mentioned (list of football players mentioned), "
+            "players_mentioned (list of football players mentioned) Full names of players only eg Havertz is Kai Havertz, "
             "summary (a concise 1–3 sentence summary suitable for an LLM). "
             "Return ONLY a valid JSON object with no extra text before or after it."
         )
