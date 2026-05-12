@@ -22,6 +22,14 @@ st.set_page_config(
 st.title("NewsPulse")
 st.markdown("Sentiment of All News Articles")
 
+# --- Mode selector for Teams/Players ---
+mode = st.radio("View Sentiment By:", ["Teams", "Players"], horizontal=True)
+
+if mode == "Teams":
+    entity_field = "teams_mentioned"
+else:
+    entity_field = "players_mentioned"
+
 
 
 #connect to supabase
@@ -41,8 +49,8 @@ def get_article_count(filter_team=None):
 
     count = 0
     for row in data:
-        teams = row.get("teams_mentioned") or []
-        if filter_team in teams:
+        items = row.get(entity_field) or []
+        if filter_team in items:
             count += 1
 
     return count
@@ -72,14 +80,13 @@ def get_recent_article_delta(hours=12, filter_team=None):
 
         if ts >= past:
             if filter_team:
-                teams = row.get("teams_mentioned") or []
-                if filter_team not in teams:
+                items = row.get(entity_field) or []
+                if filter_team not in items:
                     continue
 
             recent.append(row)
 
     return len(recent), get_article_count(filter_team)
-# getting most mentioned team
 def most_covered(number=1):
     data = fetch_sentiment_data()
     all_teams = []
@@ -91,6 +98,15 @@ def most_covered(number=1):
     # return just team names
     return team_counts.most_common(number)
 
+# --- Generalized entity counter for Teams/Players
+def get_entities(field, number=20):
+    data = fetch_sentiment_data()
+    all_items = []
+    for row in data:
+        items = row.get(field) or []
+        all_items.extend(items)
+    return Counter(all_items).most_common(number)
+
 
 # sentiment analysis (reusable)
 def compute_sentiment_overall(filter_team=None):
@@ -99,11 +115,11 @@ def compute_sentiment_overall(filter_team=None):
     sentiments = []
 
     for row in data:
-        teams = row.get("teams_mentioned") or []
+        items = row.get(entity_field) or []
 
         # if a team is specified, filter
         if filter_team:
-            if filter_team not in teams:
+            if filter_team not in items:
                 continue
 
         sentiments.append(row.get("sentiment"))
@@ -141,9 +157,9 @@ def get_sentiment_counts(filter_team=None):
 
     sentiments = []
     for row in data:
-        teams = row.get("teams_mentioned") or []
+        items = row.get(entity_field) or []
         if filter_team:
-            if filter_team not in teams:
+            if filter_team not in items:
                 continue
         sentiments.append(row.get("sentiment"))
     counts = Counter(sentiments)
@@ -158,7 +174,7 @@ def get_recent_articles_for_rag(filter_team=None, limit=10):
     data = fetch_sentiment_data()
 
     now = datetime.now(timezone.utc)
-    past = now - timedelta(hours=24)
+    past = now - timedelta(hours=168)
 
     filtered = []
 
@@ -181,8 +197,8 @@ def get_recent_articles_for_rag(filter_team=None, limit=10):
             continue
 
         if filter_team:
-            teams = row.get("teams_mentioned") or []
-            if filter_team not in teams:
+            items = row.get(entity_field) or []
+            if filter_team not in items:
                 continue
 
         filtered.append(row)
@@ -210,9 +226,10 @@ Sentiment: {sentiment}
 # default (all articles)
 overall = compute_sentiment_overall()
 
-# ================= TEAM FILTER =================
-team_list = [team for team, _ in most_covered(20)]
-selected_team = st.selectbox("Filter by Team", ["All"] + team_list)
+entity_list = [e for e, _ in get_entities(entity_field, 20)]
+selected_entity = st.selectbox(f"Filter by {mode[:-1]}", ["All"] + entity_list)
+
+filter_entity = selected_entity if selected_entity != "All" else None
 
 col1, col2, col3 = st.columns(3)
 
@@ -220,21 +237,21 @@ with col1:
     st.markdown("### 📊 Total Articles")
     recent_count, total_articles = get_recent_article_delta(
         12,
-        selected_team if selected_team != "All" else None
+        filter_entity
     )
 
     st.metric(
         label="Total Articles",
-        value=get_article_count(selected_team if selected_team != "All" else None),
+        value=get_article_count(filter_entity),
         label_visibility="collapsed",
         delta=f"+{recent_count} (last 12h)"
     )
 
 with col2:
-    st.markdown("### ⚽ Most Covered Team")
+    st.markdown(f"### {'⚽ Most Covered Team' if mode == 'Teams' else '⭐ Most Covered Player'}")
     st.metric(
-        label="Most Covered Team",
-        value=selected_team if selected_team != "All" else most_covered(1)[0][0],
+        label=f"Most Covered {mode[:-1]}",
+        value=selected_entity if selected_entity != "All" else entity_list[0],
         label_visibility="collapsed"
     )
 
@@ -242,17 +259,22 @@ with col3:
     st.markdown("### 🧠 Overall Sentiment")
     st.metric(
         label="Overall Sentiment",
-        value=compute_sentiment_overall(selected_team if selected_team != "All" else None),
+        value=compute_sentiment_overall(filter_entity),
         label_visibility="collapsed"
     )
 #================pie chart ==============
-counts = get_sentiment_counts(selected_team if selected_team != "All" else None)
+counts = get_sentiment_counts(filter_entity)
 labels = ["Positive", "Neutral", "Negative"]
 sizes = [
     counts["positive"],
     counts["neutral"],
     counts["negative"]
 ]
+# FIX: handle empty or invalid data
+if sum(sizes) == 0:
+    sizes = [1, 1, 1]
+    labels = ["No Data", "", ""]
+
 pie_fig, pie_ax = plt.subplots()
 pie_fig.patch.set_facecolor("#0e1117")
 pie_ax.set_facecolor("#0e1117")
@@ -261,7 +283,7 @@ colors = ["#2ecc71", "#95a5a6", "#e74c3c"]  # green, gray, red
 pie_ax.pie(
     sizes,
     labels=labels,
-    autopct="%1.1f%%",
+    autopct="%1.1f%%" if sum(sizes) > 0 else None,
     colors=colors,
     startangle=90,
     wedgeprops={"width": 0.4},
@@ -269,17 +291,16 @@ pie_ax.pie(
 )
 pie_ax.axis("equal")
 
-#top 10 teams bar==========================
-top_teams = most_covered(10)
-
-teams = [team for team, count in top_teams]
-team_counts = [count for team, count in top_teams]
+#top 10 entities bar==========================
+top_entities = get_entities(entity_field, 10)
+entities = [entity for entity, count in top_entities]
+entity_counts = [count for entity, count in top_entities]
 
 bar_fig, bar_ax = plt.subplots()
-colors = ["#e74c3c" if team == selected_team else "#4C78A8" for team in teams]
-bar_ax.barh(teams, team_counts, color=colors)
+colors = ["#e74c3c" if entity == selected_entity else "#4C78A8" for entity in entities]
+bar_ax.barh(entities, entity_counts, color=colors)
 bar_ax.set_xlabel("Number of Articles")
-bar_ax.set_title("Top 10 Most Covered Teams")
+bar_ax.set_title(f"Top 10 Most Covered {mode}")
 bar_ax.invert_yaxis()
 
 left, right = st.columns(2)
@@ -287,18 +308,18 @@ with left:
     st.subheader("📊 Sentiment Breakdown")
     st.pyplot(pie_fig)
 with right:
-    st.subheader("🏟️ Top 10 Teams")
+    st.subheader(f"🏟️ Top 10 {mode}")
     st.pyplot(bar_fig)
 
-#========team sentiment score===========================
-def get_team_sentiment_score(team):
+#========entity sentiment score===========================
+def get_entity_sentiment_score(entity, entity_field):
     data = fetch_sentiment_data()
 
     sentiments = []
 
     for row in data:
-        teams = row.get("teams_mentioned") or []
-        if team in teams:
+        items = row.get(entity_field) or []
+        if entity in items:
             sentiments.append(row.get("sentiment"))
 
     counts = Counter(sentiments)
@@ -313,15 +334,16 @@ def get_team_sentiment_score(team):
         return 0
 
     return (positive - negative) / total
+
 #get extremes
-def get_extreme_teams():
-    team_list = [team for team, _ in most_covered(20)]
+def get_extreme_entities(entity_field):
+    entity_list = [e for e, _ in get_entities(entity_field, 20)]
 
     scores = []
 
-    for team in team_list:
-        score = get_team_sentiment_score(team)
-        scores.append((team, score))
+    for entity in entity_list:
+        score = get_entity_sentiment_score(entity, entity_field)
+        scores.append((entity, score))
 
     most_positive = max(scores, key=lambda x: x[1])
     most_negative = min(scores, key=lambda x: x[1])
@@ -329,29 +351,29 @@ def get_extreme_teams():
     return most_positive, most_negative
 #display on dashboard
 
-if selected_team == "All":
-    pos_team, neg_team = get_extreme_teams()
+if selected_entity == "All":
+    pos_entity, neg_entity = get_extreme_entities(entity_field)
     col4, col5 = st.columns(2)
 
     with col4:
         st.metric(
-            label="🔥 Most Positive Team",
-            value=pos_team[0],
-            delta=f"{pos_team[1]:.2f}"
+            label=f"🔥 Most Positive {mode[:-1]}",
+            value=pos_entity[0],
+            delta=f"{pos_entity[1]:.2f}"
         )
 
     with col5:
         st.metric(
-            label="❄️ Most Negative Team",
-            value=neg_team[0],
-            delta=f"{neg_team[1]:.2f}"
+            label=f"❄️ Most Negative {mode[:-1]}",
+            value=neg_entity[0],
+            delta=f"{neg_entity[1]:.2f}"
         )
 
 else:
-    score = get_team_sentiment_score(selected_team)
+    score = get_entity_sentiment_score(selected_entity, entity_field)
     st.metric(
-        label=f"🧠 Sentiment Score for {selected_team}",
-        value=selected_team,
+        label=f"🧠 Sentiment Score for {selected_entity}",
+        value=selected_entity,
         delta=f"{score:.2f}"
     )
 
@@ -383,8 +405,7 @@ def generate_insight(filter_team=None):
     else:
         return f"🧠 Insight: {team_text} has balanced or neutral coverage across recent articles."
 
-filter_team = selected_team if selected_team != "All" else None
-insight = generate_insight(filter_team)
+insight = generate_insight(filter_entity)
 st.info(insight)
 
 # NOTE: AI summary can be connected to Anthropic API for advanced explanations
@@ -408,47 +429,58 @@ def get_ai_summary_cached(summary_prompt):
     return message.content[0].text
 
 if st.button("Generate AI Summary"):
-    articles = get_recent_articles_for_rag(filter_team)
-    context = build_rag_context(articles)
-    summary_prompt = f"""
-    You are analyzing recent football news sentiment using REAL articles.
+    articles = get_recent_articles_for_rag(filter_entity)
 
-    Here are the actual articles:
-    {context}
+    # Handle empty article case (common for players)
+    if not articles:
+        st.info("Not enough recent article data to generate a reliable AI summary.")
+    else:
+        context = build_rag_context(articles)
 
-    Sentiment Stats:
-    Positive: {get_sentiment_counts(filter_team)['positive']}
-    Negative: {get_sentiment_counts(filter_team)['negative']}
-    Neutral: {get_sentiment_counts(filter_team)['neutral']}
+        entity_type = "team" if mode == "Teams" else "player"
+        counts = get_sentiment_counts(filter_entity)
 
-    Instructions:
-    - You MUST reference specific articles (mention titles or events)
-    - Do NOT give generic explanations
-    - Identify 2–4 concrete reasons for the sentiment
-    - Mention real teams, players, or events from the data
-    - If no strong signals exist, say that explicitly
+        summary_prompt = f"""
+        You are analyzing recent football news sentiment for a {entity_type}.
 
-    Write a concise but specific explanation grounded in the articles.
-    if there are no articles presented you can just generalize using the sentiment counts
-    """
+        Entity: {filter_entity if filter_entity else 'All'}
 
+        Here are the actual articles:
+        {context}
 
-    st.markdown(
-        f"""
-        <div style="
-            padding: 12px;
-            border-radius: 8px;
-            background-color: #0e1117;
-            border: 1px solid #2c2f36;
-            color: #e6e6e6;
-            font-size: 15px;
-            line-height: 1.5;
-        ">
-            {get_ai_summary_cached(summary_prompt)}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+        Sentiment Stats:
+        Positive: {counts['positive']}
+        Negative: {counts['negative']}
+        Neutral: {counts['neutral']}
+
+        Instructions:
+        - If articles are available, reference specific titles or events
+        - If data is weak, rely on sentiment trends instead
+        - Identify 2–4 concrete reasons for the sentiment
+        - Mention real teams, players, or events from the data when possible
+        - If no strong signals exist, say that explicitly
+
+        Write a concise but grounded explanation.
+        """
+
+        result = get_ai_summary_cached(summary_prompt)
+
+        st.markdown(
+            f"""
+            <div style="
+                padding: 12px;
+                border-radius: 8px;
+                background-color: #0e1117;
+                border: 1px solid #2c2f36;
+                color: #e6e6e6;
+                font-size: 15px;
+                line-height: 1.5;
+            ">
+                {result}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 def get_article_title(article):
     return (
         article.get("title")
@@ -456,17 +488,15 @@ def get_article_title(article):
         or article.get("url", "").split("/")[-1].replace("-", " ").title()
         or "Untitled"
     )
-def retrieve_articles(filter_team=None, limit=10):
+def retrieve_articles(filter_entity=None, limit=10):
     data = fetch_sentiment_data()
 
     filtered = []
 
     for row in data:
-        teams = row.get("teams_mentioned") or []
-
-        if filter_team and filter_team not in teams:
+        items = row.get(entity_field) or []
+        if filter_entity and filter_entity not in items:
             continue
-
         filtered.append(row)
 
     # sort by most recent
@@ -485,8 +515,8 @@ def retrieve_articles(filter_team=None, limit=10):
 
 
 @st.cache_data(ttl=18000)
-def fetch_articles_with_details(filter_team=None, limit=10):
-    sentiment_data = retrieve_articles(filter_team, limit)
+def fetch_articles_with_details(filter_entity=None, limit=10):
+    sentiment_data = retrieve_articles(filter_entity, limit)
 
     # Get all article IDs
     article_ids = [row.get("article_id") for row in sentiment_data if row.get("article_id")]
@@ -513,7 +543,7 @@ st.markdown("---")
 st.subheader("📰 Recent Articles")
 
 num_articles = st.slider("Number of articles to display", 5, 50, 10)
-articles = fetch_articles_with_details(filter_team, num_articles)
+articles = fetch_articles_with_details(filter_entity, num_articles)
 
 if not articles:
     st.info("No articles found for the selected filter.")
@@ -522,7 +552,7 @@ else:
         title = article.get("title") or article.get("headline") or "Untitled Article"
         summary = article.get("summary", "No summary available.")
         sentiment = article.get("sentiment", "unknown")
-        teams = article.get("teams_mentioned", [])
+        entities = article.get(entity_field, [])
         url = article.get("url") or article.get("link", "")
         analyzed_at = article.get("analyzed_at", "")
 
@@ -544,8 +574,8 @@ else:
         with st.expander(f"{sentiment_icon} {idx}. {title}"):
             st.markdown(f"**Published:** {time_str}")
 
-            if teams:
-                st.markdown(f"**Teams Mentioned:** {', '.join(teams)}")
+            if entities:
+                st.markdown(f"**{mode} Mentioned:** {', '.join(entities)}")
 
             st.markdown(f"**Sentiment:** {sentiment.capitalize()}")
             st.markdown(f"**Summary:**")
