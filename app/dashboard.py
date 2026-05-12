@@ -449,5 +449,107 @@ if st.button("Generate AI Summary"):
         """,
         unsafe_allow_html=True
     )
+def get_article_title(article):
+    return (
+        article.get("title")
+        or article.get("headline")
+        or article.get("url", "").split("/")[-1].replace("-", " ").title()
+        or "Untitled"
+    )
+def retrieve_articles(filter_team=None, limit=10):
+    data = fetch_sentiment_data()
+
+    filtered = []
+
+    for row in data:
+        teams = row.get("teams_mentioned") or []
+
+        if filter_team and filter_team not in teams:
+            continue
+
+        filtered.append(row)
+
+    # sort by most recent
+    def get_time(x):
+        ts = x.get("analyzed_at")
+        if not ts:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except:
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    filtered.sort(key=get_time, reverse=True)
+
+    return filtered[:limit]
 
 
+@st.cache_data(ttl=18000)
+def fetch_articles_with_details(filter_team=None, limit=10):
+    sentiment_data = retrieve_articles(filter_team, limit)
+
+    # Get all article IDs
+    article_ids = [row.get("article_id") for row in sentiment_data if row.get("article_id")]
+
+    if not article_ids:
+        return []
+
+    # Fetch full article data
+    articles_response = supabase.table("articles").select("*").in_("id", article_ids).execute()
+    articles_dict = {art["id"]: art for art in articles_response.data}
+
+    # Merge sentiment + article data
+    merged = []
+    for sent in sentiment_data:
+        article_id = sent.get("article_id")
+        if article_id in articles_dict:
+            merged.append({**articles_dict[article_id], **sent})
+
+    return merged
+
+
+# ================= ARTICLE VIEWER =================
+st.markdown("---")
+st.subheader("📰 Recent Articles")
+
+num_articles = st.slider("Number of articles to display", 5, 50, 10)
+articles = fetch_articles_with_details(filter_team, num_articles)
+
+if not articles:
+    st.info("No articles found for the selected filter.")
+else:
+    for idx, article in enumerate(articles, 1):
+        title = article.get("title") or article.get("headline") or "Untitled Article"
+        summary = article.get("summary", "No summary available.")
+        sentiment = article.get("sentiment", "unknown")
+        teams = article.get("teams_mentioned", [])
+        url = article.get("url") or article.get("link", "")
+        analyzed_at = article.get("analyzed_at", "")
+
+        # Format timestamp
+        try:
+            ts = datetime.fromisoformat(analyzed_at.replace("Z", "+00:00"))
+            time_str = ts.strftime("%b %d, %Y %I:%M %p")
+        except:
+            time_str = "Unknown time"
+
+        # Sentiment color
+        sentiment_colors = {
+            "positive": "🟢",
+            "neutral": "🟡",
+            "negative": "🔴"
+        }
+        sentiment_icon = sentiment_colors.get(sentiment, "⚪")
+
+        with st.expander(f"{sentiment_icon} {idx}. {title}"):
+            st.markdown(f"**Published:** {time_str}")
+
+            if teams:
+                st.markdown(f"**Teams Mentioned:** {', '.join(teams)}")
+
+            st.markdown(f"**Sentiment:** {sentiment.capitalize()}")
+            st.markdown(f"**Summary:**")
+            st.write(summary)
+
+            if url:
+                st.markdown(f"[Read full article →]({url})")
