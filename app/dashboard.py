@@ -62,7 +62,7 @@ if mode == "Players/Managers":
 
         # Otherwise ignore (prevents incorrect assignments)
 
-@st.cache_data(ttl=18000)
+@st.cache_data(ttl=3600)
 def fetch_sentiment_data():
     return supabase.table("sentiment").select("*").execute().data
 

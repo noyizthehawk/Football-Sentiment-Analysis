@@ -6,8 +6,6 @@
   <component name="ChangeListManager">
     <list default="true" id="5b216b97-9f41-4f70-b9b2-ad91272d1237" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/dashboard.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/dashboard.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/sentiment-analyzer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sentiment-analyzer.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -88,7 +86,7 @@
       <workItem from="1777935550302" duration="63199000" />
       <workItem from="1778176242219" duration="17689000" />
       <workItem from="1778456197128" duration="931000" />
-      <workItem from="1778626485859" duration="11230000" />
+      <workItem from="1778626485859" duration="13686000" />
     </task>
     <servers />
   </component>
