@@ -12,6 +12,10 @@ from datetime import datetime, timedelta, timezone
 
 
 load_dotenv()
+#connect to supabase
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
+supabase=create_client(url,key)
 
 st.set_page_config(
     page_title="NewsPulse",
@@ -32,20 +36,31 @@ else:
     entity_field = "players_mentioned"
 
 # --- Player images (add more as needed) ---
-PLAYER_IMAGES = {
-    # Replace with reliable URLs you prefer
-    "Lamine Yamal": "https://upload.wikimedia.org/wikipedia/commons/e/e3/Lamine_Yamal_in_2025.jpg",
-    "Erling Haaland": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Erling_Haaland_2023.jpg/320px-Erling_Haaland_2023.jpg",
-    "Kylian Mbappé": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Kylian_Mbappe_2022.jpg/320px-Kylian_Mbappe_2022.jpg",
-    "Kai Havertz" : "https://upload.wikimedia.org/wikipedia/commons/e/e8/2019-06-11_Fußball%2C_Männer%2C_Länderspiel%2C_Deutschland-Estland_StP_2059_LR10_by_Stepro.jpg"
-}
+PLAYER_IMAGES = {}
 
+if mode == "Players/Managers":
+    response = supabase.table("sentiment").select("players_mentioned, player_image_url").execute()
+    data = response.data
 
+    for row in data:
+        players = row.get("players_mentioned") or []
+        image_data = row.get("player_image_url")
 
-#connect to supabase
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
-supabase=create_client(url,key)
+        # Case 1: image_data is a dict mapping player -> url (BEST CASE)
+        if isinstance(image_data, dict):
+            for player, url in image_data.items():
+                if player not in PLAYER_IMAGES and url:
+                    PLAYER_IMAGES[player] = url
+
+        # Case 2: image_data is a single string (fallback)
+        elif isinstance(image_data, str):
+            # Only assign if exactly one player (avoid wrong mapping)
+            if len(players) == 1:
+                player = players[0]
+                if player not in PLAYER_IMAGES:
+                    PLAYER_IMAGES[player] = image_data
+
+        # Otherwise ignore (prevents incorrect assignments)
 
 @st.cache_data(ttl=18000)
 def fetch_sentiment_data():
@@ -237,11 +252,11 @@ Sentiment: {sentiment}
 overall = compute_sentiment_overall()
 
 
-entity_list = [e for e, _ in get_entities(entity_field, 20)]
+entity_list = [e for e, _ in get_entities(entity_field, 1000)]
 selected_entity = st.selectbox(f"Filter by {mode[:-1]}", ["All"] + entity_list)
 
 # --- Selected player image ---
-if mode == "Players" and selected_entity != "All":
+if mode == "Players/Managers" and selected_entity != "All":
     col_img, col_title = st.columns([1, 3])
     with col_img:
         img_url = PLAYER_IMAGES.get(selected_entity)
@@ -454,9 +469,9 @@ def get_ai_summary_cached(summary_prompt):
 if st.button("Generate AI Summary"):
     articles = get_recent_articles_for_rag(filter_entity)
 
-    # Handle empty article case (common for players)
+    # Handle empty article case
     if not articles:
-        st.info("Not enough recent article data to generate a reliable AI summary.")
+        st.info("There Has been no articles for this entity in the past week.")
     else:
         context = build_rag_context(articles)
 

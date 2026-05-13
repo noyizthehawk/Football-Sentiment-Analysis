@@ -34,9 +34,11 @@ for article in data:
             "sentiment (positive, negative, or neutral), "
             "confidence (a float between 0 and 1 representing how confident you are in your analysis), "
             "teams_mentioned (list of football clubs mentioned), "
-            "players_mentioned (list of football players mentioned) Full names of players only eg Havertz is Kai Havertz, "
-            "summary (a concise 1–3 sentence summary suitable for an LLM). "
+            "players_mentioned (list of FULL NAMES of football players/managers mentioned), "
+            "summary (a concise 1–3 sentence summary suitable for an LLM), "
+            "player_image_url (a dictionary where each key is a player name from players_mentioned and each value is a DIRECT image URL from Wikimedia Commons (must start with https://upload.wikimedia.org/). If no reliable image is found, return null for that player). "
             "Return ONLY a valid JSON object with no extra text before or after it."
+            "Ensure player_image_url is always a dictionary, even if empty."
         )
         claude_response = client.messages.create(
             model="claude-sonnet-4-5",
@@ -61,6 +63,7 @@ for article in data:
             "confidence": output["confidence"],
             "teams_mentioned": output["teams_mentioned"],
             "players_mentioned": output["players_mentioned"],
+            "player_image_url": output["player_image_url"],
             "summary": output["summary"]
         }).execute()
 
